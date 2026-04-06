@@ -578,7 +578,7 @@ loadUnaligned( const void* data )
 }
 
 
-[[nodiscard]] size_t
+[[nodiscard]] inline size_t
 countNewlines( const std::string_view& view )
 {
     return std::count( view.begin(), view.end(), '\n' );
