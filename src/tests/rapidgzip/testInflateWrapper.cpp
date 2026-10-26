@@ -242,21 +242,190 @@ testMultiGzipStream()
 }
 
 
+[[nodiscard]] std::vector<uint8_t>
+createEmptyStoredGzipStream( const size_t additionalEmptyBlocks = 0 )
+{
+    /* An empty gzip stream whose deflate stream consists of empty stored blocks as written, e.g., by libdeflate
+     * for empty input. The final block ends byte-aligned, which must not be mistaken for the end of data. */
+    std::vector<uint8_t> result = {
+        0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,  // gzip header
+    };
+    for ( size_t i = 0; i < additionalEmptyBlocks; ++i ) {
+        result.insert( result.end(), { 0x00, 0x00, 0x00, 0xFF, 0xFF } );  // non-final stored block, LEN = 0
+    }
+    result.insert( result.end(), { 0x01, 0x00, 0x00, 0xFF, 0xFF } );  // final stored block, LEN = 0
+    result.insert( result.end(), { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } );  // CRC32, ISIZE
+    return result;
+}
+
+
+template<typename InflateWrapper>
+void
+testConcatenatedGzipStreams( const std::vector<std::vector<uint8_t>>& gzipStreams,
+                             const std::vector<std::byte>&            expectedResult )
+{
+    std::vector<uint8_t> compressedData;
+    for ( const auto& gzipStream : gzipStreams ) {
+        compressedData.insert( compressedData.end(), gzipStream.begin(), gzipStream.end() );
+    }
+
+    auto fileReader = std::make_unique<SharedFileReader>(
+        std::make_unique<BufferViewFileReader>( compressedData ) );
+    gzip::BitReader bitReader( std::move( fileReader ) );
+    bitReader.seek( 10 * CHAR_BIT );  // Deflate wrapper expects to start at deflate block
+    InflateWrapper inflateWrapper( std::move( bitReader ), compressedData.size() * BYTE_SIZE );
+
+    std::vector<std::byte> decompressedResult;
+    std::array<std::byte, 1_Ki> buffer{};
+    size_t footerCount{ 0 };
+    /* Bound the number of calls so that a no-progress bug makes the test fail instead of hang. */
+    constexpr auto MAX_READ_CALLS = 100U;
+    for ( size_t i = 0; ( i < MAX_READ_CALLS ) && ( footerCount < gzipStreams.size() ); ++i ) {
+        const auto oldOffset = inflateWrapper.tellCompressed();
+        const auto [decompressedSize, footer] = inflateWrapper.readStream(
+            reinterpret_cast<uint8_t*>( buffer.data() ), buffer.size() );
+        decompressedResult.insert( decompressedResult.end(), buffer.begin(),
+                                   buffer.begin() + static_cast<std::ptrdiff_t>( decompressedSize ) );
+        if ( footer ) {
+            ++footerCount;
+            REQUIRE( oldOffset != inflateWrapper.tellCompressed() );
+        }
+    }
+    REQUIRE_EQUAL( footerCount, gzipStreams.size() );
+    REQUIRE( decompressedResult == expectedResult );
+    REQUIRE_EQUAL( inflateWrapper.tellCompressed(), compressedData.size() * BYTE_SIZE );
+
+    std::byte dummy{ 0 };
+    const auto endOffset = inflateWrapper.tellCompressed();
+    const auto [decompressedSize, footer] = inflateWrapper.readStream(
+        reinterpret_cast<uint8_t*>( &dummy ), 1U );
+    REQUIRE_EQUAL( decompressedSize, 0U );
+    REQUIRE( !footer.has_value() );
+    REQUIRE_EQUAL( inflateWrapper.tellCompressed(), endOffset );
+}
+
+
+template<typename InflateWrapper>
+void
+testEmptyGzipStreamPlacement()
+{
+    const std::vector<std::byte> dataToCompress = { std::byte( 'A' ) };
+    const auto singleGzipStream = compressWithZlib( dataToCompress );
+    const auto emptyGzipStream = createEmptyStoredGzipStream();
+    const auto emptyGzipStreamWithTwoBlocks = createEmptyStoredGzipStream( 1 );
+    const std::vector<std::byte> expectedResult = { std::byte( 'A' ) };
+
+    testConcatenatedGzipStreams<InflateWrapper>( { emptyGzipStream, singleGzipStream }, expectedResult );
+    testConcatenatedGzipStreams<InflateWrapper>( { singleGzipStream, emptyGzipStream }, expectedResult );
+    testConcatenatedGzipStreams<InflateWrapper>( { emptyGzipStream, emptyGzipStream, singleGzipStream },
+                                                 expectedResult );
+    testConcatenatedGzipStreams<InflateWrapper>( { emptyGzipStreamWithTwoBlocks, singleGzipStream },
+                                                 expectedResult );
+    testConcatenatedGzipStreams<InflateWrapper>( { singleGzipStream, emptyGzipStreamWithTwoBlocks },
+                                                 expectedResult );
+}
+
+
+[[nodiscard]] std::vector<uint8_t>
+createEmptyStoredZlibStream()
+{
+    return {
+        0x78, 0x9C,                                      // zlib header
+        0x01, 0x00, 0x00, 0xFF, 0xFF,                    // final stored block, LEN = 0
+        0x00, 0x00, 0x00, 0x01,                          // Adler32 of empty data
+    };
+}
+
+
+template<typename InflateWrapper>
+void
+testEmptyStoredZlibStream()
+{
+    const auto compressedData = createEmptyStoredZlibStream();
+
+    auto fileReader = std::make_unique<SharedFileReader>(
+        std::make_unique<BufferViewFileReader>( compressedData ) );
+    gzip::BitReader bitReader( std::move( fileReader ) );
+    bitReader.seek( 2 * CHAR_BIT );  // Deflate wrapper expects to start at deflate block
+    InflateWrapper inflateWrapper( std::move( bitReader ), compressedData.size() * BYTE_SIZE );
+    inflateWrapper.setFileType( FileType::ZLIB );
+
+    std::byte dummy{ 0 };
+    auto [decompressedSize, footer] = inflateWrapper.readStream(
+        reinterpret_cast<uint8_t*>( &dummy ), 1U );
+    REQUIRE_EQUAL( decompressedSize, 0U );
+    REQUIRE( footer.has_value() );
+    REQUIRE_EQUAL( inflateWrapper.tellCompressed(), compressedData.size() * BYTE_SIZE );
+
+    const auto endOffset = inflateWrapper.tellCompressed();
+    std::tie( decompressedSize, footer ) = inflateWrapper.readStream(
+        reinterpret_cast<uint8_t*>( &dummy ), 1U );
+    REQUIRE_EQUAL( decompressedSize, 0U );
+    REQUIRE( !footer.has_value() );
+    REQUIRE_EQUAL( inflateWrapper.tellCompressed(), endOffset );
+}
+
+
+template<typename InflateWrapper>
+void
+testNoProgressAfterStreamEnd()
+{
+    const std::vector<std::byte> dataToCompress = { std::byte( 'A' ), std::byte( 'B' ) };
+
+    struct TestCase
+    {
+        ContainerFormat containerFormat;
+        FileType fileType;
+        size_t headerSize;
+    };
+
+    for ( const auto& testCase : std::vector<TestCase>{
+              { ContainerFormat::GZIP, FileType::GZIP, 10U },
+              { ContainerFormat::ZLIB, FileType::ZLIB, 2U },
+              { ContainerFormat::DEFLATE, FileType::DEFLATE, 0U },
+          } )
+    {
+        const auto compressedData = compressWithZlib(
+            dataToCompress, CompressionStrategy::DEFAULT, {}, testCase.containerFormat );
+
+        auto fileReader = std::make_unique<SharedFileReader>(
+            std::make_unique<BufferViewFileReader>( compressedData ) );
+        gzip::BitReader bitReader( std::move( fileReader ) );
+        bitReader.seek( testCase.headerSize * BYTE_SIZE );
+        InflateWrapper inflateWrapper( std::move( bitReader ), compressedData.size() * BYTE_SIZE );
+        inflateWrapper.setFileType( testCase.fileType );
+
+        std::vector<std::byte> decompressedResult( dataToCompress.size() );
+        auto [decompressedSize, footer] = inflateWrapper.readStream(
+            reinterpret_cast<uint8_t*>( decompressedResult.data() ), decompressedResult.size() );
+        REQUIRE_EQUAL( decompressedSize, dataToCompress.size() );
+        REQUIRE( footer.has_value() );
+        REQUIRE_EQUAL( inflateWrapper.tellCompressed(), compressedData.size() * BYTE_SIZE );
+
+        /* Once the stream has ended, readStream must not read bogus footers. Otherwise, callers that loop
+         * until no footer is returned anymore could loop forever. */
+        for ( size_t i = 0; i < 10; ++i ) {
+            std::byte dummy{ 0 };
+            const auto oldOffset = inflateWrapper.tellCompressed();
+            std::tie( decompressedSize, footer ) = inflateWrapper.readStream(
+                reinterpret_cast<uint8_t*>( &dummy ), 1U );
+            REQUIRE_EQUAL( decompressedSize, 0U );
+            REQUIRE( !footer.has_value() );
+            REQUIRE_EQUAL( inflateWrapper.tellCompressed(), oldOffset );
+        }
+    }
+}
+
+
 template<typename InflateWrapper>
 void
 testEmptyStoredGzipStream()
 {
-    /* An empty gzip stream whose deflate stream consists of a single empty, final, stored block as written,
-     * e.g., by libdeflate for empty input. It ends byte-aligned, which must not be mistaken for the end of data. */
     const std::vector<std::byte> dataToCompress = { std::byte( 'A' ) };
     const auto singleGzipStream = compressWithZlib( dataToCompress );
 
     using Bytes = std::decay_t<decltype( singleGzipStream )>;
-    const Bytes emptyStoredGzipStream = {
-        0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,  // gzip header
-        0x01, 0x00, 0x00, 0xFF, 0xFF,                                // final stored block, LEN = 0, NLEN
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              // CRC32, ISIZE
-    };
+    const auto emptyStoredGzipStream = createEmptyStoredGzipStream();
 
     Bytes compressedData;
     compressedData.insert( compressedData.end(), singleGzipStream.begin(), singleGzipStream.end() );
@@ -778,6 +947,9 @@ testInflateWrapper( const std::filesystem::path& rootFolder )
     testReadingPastEnd<InflateWrapper>( ContainerFormat::DEFLATE );
     testReadingPastEnd<InflateWrapper>( ContainerFormat::ZLIB );
     testReadingPastEnd<InflateWrapper>( ContainerFormat::GZIP );
+    testEmptyGzipStreamPlacement<InflateWrapper>();
+    testEmptyStoredZlibStream<InflateWrapper>();
+    testNoProgressAfterStreamEnd<InflateWrapper>();
     testGettingFooter<InflateWrapper>();
 }
 
