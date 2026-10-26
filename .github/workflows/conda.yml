@@ -85,8 +85,10 @@ jobs:
       if: ${{ ! startsWith(github.ref, 'refs/tags/v') }}
       shell: bash -l {0}
       working-directory: python/indexed_bzip2/conda
+      # Use the console script because the conda shell function invokes the base conda, which cannot load
+      # the conda-build plugin installed into the active test environment.
       run: |
-        conda build .
+        conda-build .
 
     - name: Publish Conda Packages
       if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -96,4 +98,4 @@ jobs:
         ANACONDA_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
       run: |
         conda config --set anaconda_upload yes
-        conda build --token "$ANACONDA_TOKEN" .
+        conda-build --token "$ANACONDA_TOKEN" .
