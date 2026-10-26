@@ -639,21 +639,21 @@ findNthNewline( const std::string_view& view,
 
 
 [[nodiscard]] constexpr uint64_t
-operator "" _Ki( unsigned long long int value ) noexcept
+operator ""_Ki( unsigned long long int value ) noexcept
 {
     return value * 1024ULL;
 }
 
 
 [[nodiscard]] constexpr uint64_t
-operator "" _Mi( unsigned long long int value ) noexcept
+operator ""_Mi( unsigned long long int value ) noexcept
 {
     return value * 1024ULL * 1024ULL;
 }
 
 
 [[nodiscard]] constexpr uint64_t
-operator "" _Gi( unsigned long long int value ) noexcept
+operator ""_Gi( unsigned long long int value ) noexcept
 {
     return value * 1024ULL * 1024ULL * 1024ULL;
 }
