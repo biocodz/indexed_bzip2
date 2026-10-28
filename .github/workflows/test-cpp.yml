@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
@@ -31,7 +31,7 @@ jobs:
     # It's not like I used it much anyway, except to have a badge.
     if: false
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -81,7 +81,7 @@ jobs:
     name: Clang-Tidy
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -106,7 +106,7 @@ jobs:
         use_system_zlib: ['ON', 'OFF']
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -197,11 +197,9 @@ jobs:
         sysctl -n machdep.cpu.brand_string
         arch
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
-
-    - uses: seanmiddleditch/gha-setup-ninja@master
 
     - name: Install System Dependencies
       if: "startsWith(matrix.os , 'macos')"
@@ -270,7 +268,7 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -326,7 +324,7 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -381,7 +379,7 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -431,7 +429,7 @@ jobs:
     name: TSan
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -479,7 +477,7 @@ jobs:
     name: Check with Infer
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -511,11 +509,9 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel, windows-latest]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
-
-    - uses: seanmiddleditch/gha-setup-ninja@master
 
     - name: Install System Dependencies
       if: "startsWith(matrix.os , 'macos')"
